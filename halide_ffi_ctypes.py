@@ -1,5 +1,5 @@
 import ctypes
-from ctypes import c_uint8, c_uint16, c_uint32, c_uint64, c_int32, c_void_p, c_char_p, POINTER, Structure, byref, create_string_buffer
+from ctypes import c_uint8, c_uint16, c_uint32, c_uint64, c_int32, c_int64, c_void_p, c_char_p, POINTER, Structure, byref, create_string_buffer
 
 class HalideType(Structure):
     _fields_ = [
@@ -36,7 +36,9 @@ class HalideFilterArgument(Structure):
         ("type", HalideType),
         ("def", c_void_p),
         ("min", c_void_p),
-        ("max", c_void_p)
+        ("max", c_void_p),
+        ("estimate", c_void_p),
+        ("buffer_estimates", POINTER(POINTER(c_int64))) # array of dimensions*2 pointers of (min, extent)
     ]
 
 class HalideFilterMetadata(Structure):
@@ -219,7 +221,7 @@ class LibBinder:
 
     def close(self):
         if self.render_library:
-            ctypes.windll.kernel32.FreeLibrary(self.render_library._handle)
+            ctypes.windll.kernel32.FreeLibrary(ctypes.c_uint32(self.render_library._handle)) # 32bit handle
             self.render_library = None
             self.render_function = None
 
@@ -237,7 +239,7 @@ class LibBinder:
     def bind(self, fnname, libpath, args: dict):
         self.close()
 
-        self.render_library = ctypes.CDLL(libpath) #ctypes.WinDLL(libpath)
+        self.render_library = ctypes.CDLL(libpath) # RTLD_NOW: always added on Unix-like
         rawfn = getattr(self.render_library, fnname)
 
         rawmetafn = getattr(self.render_library, fnname + "_metadata")
@@ -245,7 +247,8 @@ class LibBinder:
         rawmetafn.restype = POINTER(HalideFilterMetadata)
         metadata = rawmetafn().contents
 
-        if metadata.version != 0:
+        # https://github.com/halide/Halide/commit/d2d2f846ed51721d2cc1679b4b3e95b315d03e67
+        if metadata.version != 1:
             raise ValueError(f"Unknown Filter Metadata version: {metadata.version}")
 
         params = gather_params(metadata.arguments, metadata.num_arguments)
