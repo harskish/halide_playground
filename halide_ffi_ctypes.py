@@ -1,5 +1,6 @@
 import ctypes
 from ctypes import c_uint8, c_uint16, c_uint32, c_uint64, c_int32, c_int64, c_void_p, c_char_p, POINTER, Structure, byref, create_string_buffer
+import numpy as np
 
 class HalideType(Structure):
     _fields_ = [
@@ -67,19 +68,26 @@ class Buffer:
         self.buffer.dimension[1] = HalideDimension(0, height, width, 0)
         self.buffer.dimension[2] = HalideDimension(0, channels, width * height, 0)
 
-    def ref(self):
-        return byref(self.buffer)
-
+    @property
     def width(self):
         return self.buffer.dimension[1].stride
-
+    
+    @property
+    def height(self):
+        return self.buffer.dimension[1].extent
+    
+    @property
     def plane(self):
         return self.buffer.dimension[2].stride
 
+    @property
+    def channels(self):
+        return self.buffer.dimension[2].extent
+
     def fill_with_checkerboard(self, size):
-        width = self.width()
+        width = self.width
         array = self.array
-        plane = self.plane()
+        plane = self.plane
 
         limit = min(width * size * 2, plane)
         for i in range(limit):
@@ -95,26 +103,16 @@ class Buffer:
 
         for i in range(plane, len(array)):
             array[i] = array[i - plane]
-
-    def fill_with_image(self, source_image):
-        width = self.width()
-        array = self.array
-        plane = self.plane()
-
-        srcdata = source_image.data
-        stride = source_image.width
-        x = 0
-        y = 0
-
-        for i in range(len(srcdata)):
-            ch = i % 4
-            if ch != 3:
-                array[plane * ch + x * width + y] = srcdata[i]
-            else:
-                y += 1
-                if y == stride:
-                    y = 0
-                    x += 1
+    
+    def numpy_hwc(self) -> np.ndarray:
+        np_whc = np.ctypeslib.as_array(self.array).reshape(self.width, self.height, self.channels)
+        return np.transpose(np_whc, (1, 0, 2))
+    
+    def from_numpy(self, np_array_hwc: np.ndarray):
+        assert np_array_hwc.dtype == np.uint8
+        assert np_array_hwc.shape == (self.height, self.width, self.channels)
+        np_array_whc = np.transpose(np_array_hwc, (1, 0, 2)).copy()
+        ctypes.memmove(ctypes.byref(self.array), np_array_whc.ctypes.data, np_array_whc.nbytes)
 
 def make_buffer(width, height, channels):
     return Buffer(width, height, channels)
@@ -216,8 +214,9 @@ class LibBinder:
     def __init__(self):
         self.render_library = None
         self.render_function = None
-        self.output = None
-        self.outbuf = None
+        #self.output = None
+        #self.outbuf = None
+        self.output_buffer = None
 
     def close(self):
         if self.render_library:
@@ -232,9 +231,9 @@ class LibBinder:
             return None, "No currently bound function."
 
     def prepare(self, width, height, channels):
-        buff = make_buffer(width, height, channels) # [halide buffer ptr, native buffer]
-        self.output = buff.buffer
-        self.outbuf = buff.buffer.host
+        self.output_buffer = make_buffer(width, height, channels) # [halide buffer ptr, native buffer]
+        #self.output = buff.buffer
+        #self.outbuf = buff.buffer.host
 
     def bind(self, fnname, libpath, args: dict):
         self.close()
@@ -267,13 +266,13 @@ class LibBinder:
             result = [None] #[byref(error_buffer)]
             for arg in vars:
                 result.append(args[arg["name"]])
-            result.append(self.output)
+            result.append(self.output_buffer.buffer)
 
             code = boundfn(*result)
             was_error = code != 0
 
             if code == 0:
-                return self.outbuf, error_buffer
+                return self.output_buffer, error_buffer
             else:
                 return None, error_buffer
 

@@ -11,7 +11,7 @@ RDom dom(input);
 
 ip(x, y, c) = cast<float>(BoundaryConditions::repeat_edge(input)(x, y, c));
 
-Param<int> radius("radius", 5, 1, 15);
+Param<int> radius("radius", 5, 1, 27);
 
 RDom r(-radius, radius, -radius, radius);
 

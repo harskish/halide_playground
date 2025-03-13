@@ -3,7 +3,10 @@ import platform
 from pathlib import Path
 import subprocess
 import halide as hl
-from halide_ffi_ctypes import LibBinder
+import numpy as np
+from halide_ffi_ctypes import LibBinder, Buffer
+from pyviewer import single_image_viewer as siv
+siv.init('siv', sync=False, hidden=True)
 
 def run_in_vs2022_cmd(*args, cwd=None, shell=False):
     # If vcvars already set, don't re-run
@@ -19,7 +22,7 @@ def run_in_vs2022_cmd(*args, cwd=None, shell=False):
 
 assert platform.system() == 'Windows'
 
-filepath = Path('examples/write.cpp')
+filepath = Path('examples/blur.cpp')
 rootdir = filepath.parent
 ext = filepath.suffix
 stem = filepath.stem
@@ -53,24 +56,32 @@ binder = LibBinder()
 libname_abs = Path(__file__).parent / 'examples' / libname.as_posix()
 assert libname_abs.is_file()
 
-for inval in [123, 456, 789]:
+siv.inst.show()
+
+from PIL import Image
+input_img = np.array(Image.open('examples/ueno.jpg').convert('RGB'))
+H, W, C = input_img.shape
+
+for radius in [1, 5, 11, 21]:
     args = {} # handle passed to bind
     binder.close()
-    binder.prepare(512, 512, 3)
+    binder.prepare(W, H, C)
     vars = binder.bind("render", libname_abs.as_posix(), args)
 
     for v in vars:
         name = v['name']
         if v.get('buffer', False):
-            buff = v['make_buffer'](512, 512, 3)
-            buff.buffer.host[0] = inval
+            buff: Buffer = v['make_buffer'](W, H, C)
+            buff.from_numpy(input_img)
             args[v["name"]] = buff.buffer
         elif v.get('int', False):
             args[v["name"]] = v["default"]
         else:
             raise ValueError(f"Unhandled variable: {v}")
-
-    outarr, errors = binder.call()
-    assert outarr[0] == (inval + 1) % 256
+    
+    args['radius'] = radius
+    
+    outbuf, errors = binder.call()
+    siv.draw(img_hwc=outbuf.numpy_hwc())
 
 print('Done')
