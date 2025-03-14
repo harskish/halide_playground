@@ -6,6 +6,7 @@ import subprocess
 from types import SimpleNamespace
 import halide as hl
 import numpy as np
+import time
 from PIL import Image
 from glfw import KEY_F5
 from pyviewer.toolbar_viewer import AutoUIViewer
@@ -126,8 +127,8 @@ class Viewer(AutoUIViewer):
         # Carry values over
         # Label contains kernel name => unique widgets
         for k in new_params:
-            if k in self.params:
-                new_params[k] = self.params[k]
+           if k in self.params and isinstance(new_params[k], Param):
+               new_params[k] = self.params[k] # copy old Param object over, keeping state
         
         # Atomically replace
         self.params = new_params
@@ -140,7 +141,11 @@ class Viewer(AutoUIViewer):
             value = self.params[k].value
             self.args[name] = meta.cast_fun(value) if hasattr(meta, 'cast_fun') else value
         
+        t0 = time.perf_counter()
+        print(f'Calling {self.state.kernel}...', end='')
         outbuf, _ = self.binder.call() # TODO: new args as input?
+        print(f'done ({time.perf_counter() - t0:.2f}s)')
+
         return outbuf
     
     def draw_toolbar(self):

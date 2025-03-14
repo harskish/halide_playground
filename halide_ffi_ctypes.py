@@ -274,8 +274,8 @@ class LibBinder:
     def prepare(self, width, height, channels):
         curr = self.output_buffer
         if curr and curr.width == width and curr.height == height and curr.channels == channels:
-            print('LibBinder.prepare(): reusing buffer')
             return
+        print('LibBinder.prepare(): allocating new buffer')
         self.output_buffer = make_buffer(width, height, channels) # [halide buffer ptr, native buffer]
 
     def bind(self, fnname, libpath, args: dict):
