@@ -17,7 +17,6 @@ hl_header = hl_root / 'include' / 'HalideRuntime.h'
 versions = [l for l in hl_header.read_text().splitlines() if l.startswith('#define HALIDE_VERSION_')]
 major, minor, patch = [int(v.split()[-1]) for v in versions]
 assert (major, minor, patch) == (19, 0, 0)
-assert platform.system() == 'Windows', 'Not yet tested on other platforms'
 
 def run_in_vs2022_cmd(*args, cwd=None, shell=False):
     if 'VisualStudioVersion' in os.environ:
@@ -63,7 +62,8 @@ class Viewer(AutoUIViewer):
 
         stem = filepath.stem
         basename = Path('.') / 'build' / stem # relative to examples/
-        libname_rel = basename.with_suffix('.dll')
+        lib_ext = { 'Windows': '.dll', 'Linux': '.so', 'Darwin': '.dylib' }[platform.system()]
+        libname_rel = basename.with_suffix(lib_ext)
         libname_abs = Path(__file__).parent / 'examples' / libname_rel.as_posix()
 
         os.environ['STEM'] = stem
@@ -74,9 +74,13 @@ class Viewer(AutoUIViewer):
 
         #print('State pre:', libname_abs.stat())
 
-        lib_mtime = libname_abs.stat().st_mtime # modification
+        lib_mtime = libname_abs.stat().st_mtime if libname_abs.is_file() else 0 # modification
         os.makedirs('examples/build/tmp', exist_ok=True)
-        run_in_vs2022_cmd('nmake', '/f', 'NMakefile', str(libname_rel), cwd='examples')
+        
+        if platform.system() == 'Windows':
+            run_in_vs2022_cmd('nmake', '/f', 'NMakefile', str(libname_rel), cwd='examples')
+        else:
+            subprocess.run(['make', str(libname_rel)], cwd='examples')
         
         #print('State post:', libname_abs.stat())
 

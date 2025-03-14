@@ -1,6 +1,7 @@
 import ctypes
 from ctypes import c_uint8, c_uint16, c_uint32, c_uint64, c_int32, c_int64, c_void_p, c_char_p, POINTER, Structure, byref, create_string_buffer
 from types import SimpleNamespace
+import platform
 import numpy as np
 
 class HalideType(Structure):
@@ -246,7 +247,7 @@ class LibBinder:
         self.output_buffer = None
 
     def close(self):
-        if self.render_library:
+        if self.render_library and platform.system() == "Windows":
             handle = self.render_library._handle
             del self.render_library
             ctypes.windll.kernel32.FreeLibrary(ctypes.c_void_p(handle))

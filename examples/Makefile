@@ -12,7 +12,7 @@ endif
 SHELL = bash
 CXX ?= g++
 
-CXX_FLAGS = -lstdc++ -std=c++11
+CXX_FLAGS = -lstdc++ -std=c++17
 DEF_PATHS = -I $(HALIDE_PATH)/include
 DBG_FLAG = -g
 
@@ -27,9 +27,9 @@ build/tmp/%_fn.cpp: %.cpp Makefile
 	echo 'return result;' >> $@
 	echo '}' >> $@
 
-bin/libHalide.so:
+bin/libHalide.$(LIB_EXT):
 	mkdir -p bin
-	cp $(HALIDE_PATH)/bin/libHalide.so bin
+	cp $(HALIDE_PATH)/lib/libHalide.$(LIB_EXT) bin
 
 build/main.o: main.cpp
 	echo $(HALIDE_PATH)
@@ -37,14 +37,14 @@ build/main.o: main.cpp
 	$(CXX) $(DBG_FLAG) $(CXX_FLAGS) $(DEF_PATHS) -c $< -o $@
 
 # a main function that calls the generated function and writes the .o and .h files
-build/tmp/mk_%: build/tmp/%_fn.cpp build/main.o bin/libHalide.so
+build/tmp/mk_%: build/tmp/%_fn.cpp build/main.o bin/libHalide.$(LIB_EXT)
 	echo $(HALIDE_PATH)
 	$(CXX) build/main.o $< $(DBG_FLAG) $(DEF_PATHS) $(CXX_FLAGS) -lpthread -Lbin -lHalide -o $@
 
 # call the generated executable to produce the object code
 build/%.o: build/tmp/mk_%
 	mkdir -p build
-	./$< build/$* render
+	DYLD_LIBRARY_PATH=bin ./$< build/$* render
 
 build/error_handler.o: error_handler.c
 	mkdir -p build
