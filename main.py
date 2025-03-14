@@ -1,3 +1,4 @@
+from collections import defaultdict
 import os
 import platform
 from pathlib import Path
@@ -33,6 +34,7 @@ def run_in_vs2022_cmd(*args, cwd=None, shell=False):
 class CommonState(ParamContainer):
     kernel: Param = EnumParam('Kernel', 'blur', ['write', 'blur'])
     out_WH: Param = Int2Param('Output (W, H)', (1024, 681), 32, 4096)
+    input: Param = EnumSliderParam('Input', 'Ueno', ['Ueno', 'Black'])
     
 class Viewer(AutoUIViewer):
     def setup_state(self):
@@ -48,46 +50,45 @@ class Viewer(AutoUIViewer):
         self.vars = None # pipeline metadata
         self.args = {} # pipeline input arguments
 
-        self.prev_kernel_contents = ''
+        self.prev_kernel_contents = defaultdict(str)
         ret = self.recompile_and_run()
         self.update_image(ret.numpy_hwc())
     
     def recompile(self):
         filepath = Path(f'examples/{self.state.kernel}.cpp')
-
-        contents = filepath.read_text()
-        if contents == self.prev_kernel_contents:
-            print('Contents identical!')
-            return
-
         stem = filepath.stem
         basename = Path('.') / 'build' / stem # relative to examples/
         lib_ext = { 'Windows': '.dll', 'Linux': '.so', 'Darwin': '.dylib' }[platform.system()]
         libname_rel = basename.with_suffix(lib_ext)
         libname_abs = Path(__file__).parent / 'examples' / libname_rel.as_posix()
 
-        os.environ['STEM'] = stem
-        os.environ['HALIDE_PATH'] = str(hl_root.resolve()) # Windows path syntax
-
-        # Windows: close DLL handle (otherwise compiler can't overwrite)
+        # Windows: close DLL handle before reloading
         self.binder.close()
 
-        #print('State pre:', libname_abs.stat())
+        # Only recompile if sources have changed
+        contents = filepath.read_text()
+        if contents != self.prev_kernel_contents[self.state.kernel]:
+            os.environ['STEM'] = stem
+            os.environ['HALIDE_PATH'] = str(hl_root.resolve()) # Windows path syntax
 
-        lib_mtime = libname_abs.stat().st_mtime if libname_abs.is_file() else 0 # modification
-        os.makedirs('examples/build/tmp', exist_ok=True)
-        
-        if platform.system() == 'Windows':
-            run_in_vs2022_cmd('nmake', '/f', 'NMakefile', str(libname_rel), cwd='examples')
-        else:
-            subprocess.run(['make', str(libname_rel)], cwd='examples')
-        
-        #print('State post:', libname_abs.stat())
+            #print('State pre:', libname_abs.stat())
 
-        if libname_abs.stat().st_mtime == lib_mtime and self.prev_kernel_contents != '':
-            print('Library unchanged, compilation probably failed')
+            lib_mtime = libname_abs.stat().st_mtime if libname_abs.is_file() else 0 # modification
+            os.makedirs('examples/build/tmp', exist_ok=True)
+            
+            if platform.system() == 'Windows':
+                run_in_vs2022_cmd('nmake', '/f', 'NMakefile', str(libname_rel), cwd='examples')
+            else:
+                subprocess.run(['make', str(libname_rel)], cwd='examples')
+            
+            #print('State post:', libname_abs.stat())
+
+            if libname_abs.stat().st_mtime == lib_mtime and self.prev_kernel_contents[self.state.kernel] != '':
+                print('Library unchanged, compilation probably failed')
+            else:
+                self.prev_kernel_contents[self.state.kernel] = contents
         else:
-            self.prev_kernel_contents = contents
+            print('Contents identical!')
 
         self.binder.prepare(*self.state.out_WH, self.out_ch)
         self.vars = self.binder.bind("render", libname_abs.as_posix(), self.args)
@@ -97,6 +98,14 @@ class Viewer(AutoUIViewer):
         self.recompile()
         return self.run_pipeline()
     
+    def get_input(self):
+        if self.state.input == 'Ueno':
+            return self.input_img
+        elif self.state.input == 'Black':
+            return np.zeros_like(self.input_img)
+        else:
+            raise ValueError(f"Unknown input: {self.state.input}")
+    
     def setup_widgets(self):
         new_params = {}
         for v in self.vars:
@@ -104,7 +113,7 @@ class Viewer(AutoUIViewer):
             if v.buffer:
                 H, W, C = self.input_img.shape
                 buff: Buffer = v.make_buffer(W, H, C)
-                buff.from_numpy(self.input_img)
+                buff.from_numpy(self.get_input())
                 # TODO: ConstantParam?
                 new_params[v.name] = SimpleNamespace(value=buff.buffer) # shared across kernels
             elif v.type == 'float':

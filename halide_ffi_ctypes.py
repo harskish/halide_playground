@@ -157,7 +157,7 @@ def make_caster(type, bits):
     else:
         raise ValueError(f"invalid type: {type} {bits}")
 
-    return lambda buf: None if not buf else reader(buf)
+    return lambda buf: reader(buf)
 
 def convert_argument_struct(ma):
     type = ["int", "uint", "float", "handle"][ma.type.code]
@@ -247,12 +247,23 @@ class LibBinder:
         self.output_buffer = None
 
     def close(self):
-        if self.render_library and platform.system() == "Windows":
-            handle = self.render_library._handle
-            del self.render_library
+        if not self.render_library:
+            return
+        
+        handle = self.render_library._handle
+        del self.render_library
+        self.render_library = None
+        self.render_function = None
+        
+        if platform.system() == "Windows":    
             ctypes.windll.kernel32.FreeLibrary(ctypes.c_void_p(handle))
-            self.render_library = None
-            self.render_function = None
+        elif platform.system() == 'Darwin':
+            ret = ctypes.cdll.LoadLibrary("libSystem.dylib").dlclose(handle)
+            print(ret)
+        elif platform.system() == 'Linux':
+            ctypes.cdll.LoadLibrary("libdl.so").dlclose(handle)
+        else:
+            raise ValueError(f"Unsupported platform: {platform.system()}")
 
     def call(self):
         if self.render_function:
