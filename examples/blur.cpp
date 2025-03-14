@@ -10,8 +10,9 @@ Func ip;
 RDom dom(input);
 
 ip(x, y, c) = cast<float>(BoundaryConditions::repeat_edge(input)(x, y, c));
+//ip(x, y, c) = cast<float>(BoundaryConditions::constant_exterior(input, 0)(x, y, c));
 
-Param<int> radius("radius", 5, 1, 27);
+Param<int> radius("radius", 5, 1, 21);
 
 RDom r(-radius, radius, -radius, radius);
 

@@ -1,5 +1,6 @@
 import ctypes
 from ctypes import c_uint8, c_uint16, c_uint32, c_uint64, c_int32, c_int64, c_void_p, c_char_p, POINTER, Structure, byref, create_string_buffer
+from types import SimpleNamespace
 import numpy as np
 
 class HalideType(Structure):
@@ -137,6 +138,26 @@ def make_dereferencer(type, bits):
 
     return lambda buf: None if not buf else ctypes.cast(buf, POINTER(reader))[0]
 
+def make_caster(type, bits):
+    if bits == 1:
+        return lambda buf: None if not buf else bool(ctypes.cast(buf, POINTER(ctypes.c_int8))[0])
+    elif type == "int" and bits == 8:
+        reader = ctypes.c_int8
+    elif type == "uint" and bits == 8:
+        reader = ctypes.c_uint8
+    elif type == "int" and bits % 8 == 0:
+        reader = getattr(ctypes, f"c_int{bits}")
+    elif type == "uint" and bits % 8 == 0:
+        reader = getattr(ctypes, f"c_uint{bits}")
+    elif type == "float" and bits == 32:
+        reader = ctypes.c_float
+    elif type == "float" and bits == 64:
+        reader = ctypes.c_double
+    else:
+        raise ValueError(f"invalid type: {type} {bits}")
+
+    return lambda buf: None if not buf else reader(buf)
+
 def convert_argument_struct(ma):
     type = ["int", "uint", "float", "handle"][ma.type.code]
 
@@ -192,21 +213,27 @@ def gather_vars(args, nargs):
         ma = convert_argument_struct(args[i])
 
         if ma["kind"] == "input":
-            vars.append({
+            vars.append(SimpleNamespace(**{
                 "name": ma["name"],
                 "make_buffer": make_buffer,
-                "buffer": True
-            })
+                "buffer": True,
+            }))
         elif ma["kind"] == "scalar" and ma["type"] != "handle":
             dereffer = make_dereferencer(ma["type"], ma["bits"])
-            vars.append({
+            caster = make_caster(ma["type"], ma["bits"])
+            meta = SimpleNamespace(**{
                 "int": ma["is_int"],
                 "bool": ma["bits"] == 1,
                 "name": ma["name"],
                 "default": dereffer(getattr(args[i], 'def')),
                 "min": dereffer(getattr(args[i], 'min')),
-                "max": dereffer(getattr(args[i], 'max'))
+                "max": dereffer(getattr(args[i], 'max')),
+                "type": ma["type"],
+                "bits": ma["bits"],
+                "buffer": False,
+                "cast_fun": caster,
             })
+            vars.append(meta)
 
     return vars
 
@@ -220,7 +247,9 @@ class LibBinder:
 
     def close(self):
         if self.render_library:
-            ctypes.windll.kernel32.FreeLibrary(ctypes.c_uint32(self.render_library._handle)) # 32bit handle
+            handle = self.render_library._handle
+            del self.render_library
+            ctypes.windll.kernel32.FreeLibrary(ctypes.c_void_p(handle))
             self.render_library = None
             self.render_function = None
 
@@ -231,9 +260,11 @@ class LibBinder:
             return None, "No currently bound function."
 
     def prepare(self, width, height, channels):
+        curr = self.output_buffer
+        if curr and curr.width == width and curr.height == height and curr.channels == channels:
+            print('LibBinder.prepare(): reusing buffer')
+            return
         self.output_buffer = make_buffer(width, height, channels) # [halide buffer ptr, native buffer]
-        #self.output = buff.buffer
-        #self.outbuf = buff.buffer.host
 
     def bind(self, fnname, libpath, args: dict):
         self.close()
@@ -265,7 +296,7 @@ class LibBinder:
 
             result = [None] #[byref(error_buffer)]
             for arg in vars:
-                result.append(args[arg["name"]])
+                result.append(args[arg.name])
             result.append(self.output_buffer.buffer)
 
             code = boundfn(*result)
