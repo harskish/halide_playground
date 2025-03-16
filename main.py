@@ -8,10 +8,14 @@ import halide as hl
 import numpy as np
 import time
 from PIL import Image
-from glfw import KEY_F5
+from glfw import KEY_F5, KEY_LEFT_CONTROL, KEY_S
 from pyviewer.toolbar_viewer import AutoUIViewer
 from pyviewer.params import *
 from halide_ffi_ctypes import LibBinder, Buffer
+
+from pyviewer.imgui_themes import color_uint as hex_color
+from imgui_bundle import imgui, imgui_md # type: ignore
+from imgui_bundle import imgui_color_text_edit as ed # type: ignore
 
 # Halide C++ library bundled with python package
 hl_root = Path(hl.install_dir())
@@ -51,9 +55,26 @@ class Viewer(AutoUIViewer):
         self.vars = None # pipeline metadata
         self.args = {} # pipeline input arguments
 
+        # Initialize code editor
+        self.editor_active_kernel = self.state.kernel
+        self.kernels_dir = Path(__file__).parent / 'examples'
+        self.editor_sources = { k: (self.kernels_dir / f'{k}.cpp').read_text() for k in self.state['kernel'].opts }
+        self.editor = ed.TextEditor()
+        self.editor.set_language_definition(ed.TextEditor.LanguageDefinition.c_plus_plus())
+        self.editor.set_text(self.editor_sources[self.state.kernel])        
+        self.editor.set_show_whitespaces(False)
+        palette = self.editor.get_dark_palette()
+        palette[ed.TextEditor.PaletteIndex.number] = imgui.IM_COL32(*hex_color("#CAC074")[::-1]) # endianness mismatch?
+        self.editor.set_palette(palette)
+
         self.prev_kernel_contents = defaultdict(str)
         ret = self.recompile_and_run()
         self.update_image(ret.numpy_hwc())
+    
+    # Override to be extra wide
+    @property
+    def toolbar_width(self):
+        return int(round(600 * self.v.ui_scale))
     
     def recompile(self):
         filepath = Path(f'examples/{self.state.kernel}.cpp')
@@ -63,7 +84,7 @@ class Viewer(AutoUIViewer):
         libname_rel = basename.with_suffix(lib_ext)
         libname_abs = Path(__file__).parent / 'examples' / libname_rel.as_posix()
 
-        # Windows: close DLL handle before reloading
+        # Close library handle before reloading
         self.binder.close()
 
         # Only recompile if sources have changed
@@ -72,8 +93,6 @@ class Viewer(AutoUIViewer):
             os.environ['STEM'] = stem
             os.environ['HALIDE_PATH'] = str(hl_root.resolve()) # Windows path syntax
 
-            #print('State pre:', libname_abs.stat())
-
             lib_mtime = libname_abs.stat().st_mtime if libname_abs.is_file() else 0 # modification
             os.makedirs('examples/build/tmp', exist_ok=True)
             
@@ -81,8 +100,6 @@ class Viewer(AutoUIViewer):
                 run_in_vs2022_cmd('nmake', '/f', 'NMakefile', str(libname_rel), cwd='examples')
             else:
                 subprocess.run(['make', str(libname_rel)], cwd='examples')
-            
-            #print('State post:', libname_abs.stat())
 
             if libname_abs.stat().st_mtime == lib_mtime and self.prev_kernel_contents[self.state.kernel] != '':
                 print('Library unchanged, compilation probably failed')
@@ -147,29 +164,39 @@ class Viewer(AutoUIViewer):
         print(f'done ({time.perf_counter() - t0:.2f}s)')
 
         return outbuf
-    
+
+    def editor_save_action(self):
+        """Editor save action, triggered by ctrl+s or cmd+s."""
+        if self.state.kernel != self.editor_active_kernel:
+            print('Mid-switch, aborting')
+            return
+        
+        kernel_name = self.state.kernel
+        pth = self.kernels_dir / f'{kernel_name}.cpp'
+        assert pth.is_file(), f"File not found: {pth}"
+        new_src = self.editor.get_text()
+        if self.state.kernel != kernel_name:
+            print('Kernel selection changed during save, aborting')
+            return
+        pth.write_text(new_src)
+        print('Saved', pth)
+
     def draw_toolbar(self):
         for k, v in self.params.items():
             if isinstance(v, Param):
                 v.draw()
-    
-    def draw_pre(self):
-        pass # fullscreen plotting (examples/plotting.py)
 
-    def draw_overlays(self, draw_list):
-        pass # draw on top of UI elements
-
-    def draw_output_extra(self):
-        pass # draw below main output (see `pad_bottom` in constructor)
-
-    def draw_menu(self):
-        pass
-
-    def drag_and_drop_callback(self, paths: list[Path]):
-        pass
+        # Detect source file change
+        if self.state.kernel != self.editor_active_kernel:
+            self.editor_sources[self.editor_active_kernel] = self.editor.get_text() # write updated back
+            self.editor.set_text(self.editor_sources[self.state.kernel])
+            self.editor_active_kernel = self.state.kernel
+        
+        self.editor.render(f"{self.state.kernel}.cpp")
 
     def compute(self):
-        if self.v.keyhit(KEY_F5):
+        if self.v.keydown(KEY_LEFT_CONTROL) and self.v.keyhit(KEY_S):
+            self.editor_save_action()
             buff = self.recompile_and_run()
             return buff.numpy_hwc()
         return None # reuse cached

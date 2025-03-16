@@ -27,10 +27,8 @@ rweight(x, y) = weight(x, y) / sum(weight(r.x, r.y));
 // Kernel rdom has concrete shape => rweight gets shape
 //result(x, y, c) = cast<uint8_t>(sum(ip(x + r.x, y + r.y, c) * rweight(r.x, r.y)));
 
-ip(0, 0, 0) = 255.0f; // red, tl
-//ip(5, 0, 0) = 155.0f;
-//ip(512, 512, 1) = 255.0f;
-//ip(512, 512, 2) = 255.0f;
+ip(x, y, c) = select(x == 0 & y == 0 & c == 0, 255, ip(x, y, c));
+
 
 result(x, y, c) = cast<uint8_t>(ip(x, y, c));
 //result(0, 0, 0) = 0;
