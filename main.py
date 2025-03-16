@@ -195,6 +195,10 @@ class Viewer(AutoUIViewer):
         self.editor.render(f"{self.state.kernel}.cpp")
 
     def compute(self):
+        # imgui_bundle version seems broken:
+        # https://github.com/pthom/ImGuiColorTextEdit/blob/165ca5fe8be900884c88b90f16955bbf848b23ee/TextEditor.cpp#L2027
+        # https://github.com/BalazsJako/ImGuiColorTextEdit/blob/0a88824f7de8d0bd11d8419066caa7d3469395c4/TextEditor.cpp#L702C17-L702C38
+        # imgui.get_io().config_mac_osx_behaviors = True
         mod_key = KEY_LEFT_SUPER if platform.system() == 'Darwin' else KEY_LEFT_CONTROL
         if self.v.keydown(mod_key) and self.v.keyhit(KEY_S):
             self.editor_save_action()
