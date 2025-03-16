@@ -65,6 +65,7 @@ class Buffer:
         self.buffer.type = HalideType(1, 8, 1) # code, bits, lanes
         self.buffer.dimensions = 3
 
+        # https://github.com/halide/atom/blob/523238d9/lib/halide-lib-binder.coffee#L67
         self.buffer.dimension = (HalideDimension * 3)()
         self.buffer.dimension[0] = HalideDimension(0, width, 1, 0) # min, extent, stride, flags
         self.buffer.dimension[1] = HalideDimension(0, height, width, 0)
@@ -80,15 +81,17 @@ class Buffer:
     
     @property
     def plane(self):
+        """Size of width*height single-color plane"""
         return self.buffer.dimension[2].stride
 
     @property
     def channels(self):
         return self.buffer.dimension[2].extent
 
+    # https://github.com/halide/atom/blob/523238d9/lib/halide-lib-binder.coffee#L101
     def fill_with_checkerboard(self, size):
         width = self.width
-        array = self.array
+        array = self.array # 1d array, x-axis has stride 1, y-axis has stride width
         plane = self.plane
 
         limit = min(width * size * 2, plane)
@@ -107,14 +110,18 @@ class Buffer:
             array[i] = array[i - plane]
     
     def numpy_hwc(self) -> np.ndarray:
-        np_whc = np.ctypeslib.as_array(self.array).reshape(self.width, self.height, self.channels)
-        return np.transpose(np_whc, (1, 0, 2))
+        # Pipeline output: x-axis stride 1, y-axis stride width
+        np_chw = np.ctypeslib.as_array(self.array).reshape(self.channels, self.height, self.width)
+        return np.transpose(np_chw, (1, 2, 0))
     
     def from_numpy(self, np_array_hwc: np.ndarray):
+        # "By default halide assumes the first dimension (x in this case) is dense in memory (stride 1)"
+        # https://github.com/harskish/anyscale/blob/b29a5c01/lib/halide_ops/halide_pt_op.py#L51
+        #assert np_array_chw.ndim != 3 or np_array_chw.shape[0] in [1, 3, 4], 'Halide expects CHW tensors'
         assert np_array_hwc.dtype == np.uint8
         assert np_array_hwc.shape == (self.height, self.width, self.channels)
-        np_array_whc = np.transpose(np_array_hwc, (1, 0, 2)).copy()
-        ctypes.memmove(ctypes.byref(self.array), np_array_whc.ctypes.data, np_array_whc.nbytes)
+        np_array_chw = np.transpose(np_array_hwc, (2, 0, 1)).copy()
+        ctypes.memmove(ctypes.byref(self.array), np_array_chw.ctypes.data, np_array_chw.nbytes)
 
 def make_buffer(width, height, channels):
     return Buffer(width, height, channels)

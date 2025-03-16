@@ -37,7 +37,7 @@ def run_in_vs2022_cmd(*args, cwd=None, shell=False):
 
 @strict_dataclass
 class CommonState(ParamContainer):
-    kernel: Param = EnumParam('Kernel', 'blur', ['write', 'blur'])
+    kernel: Param = EnumParam('Kernel', 'write', ['write', 'blur'])
     out_WH: Param = Int2Param('Output (W, H)', (1024, 681), 32, 4096)
     input: Param = EnumSliderParam('Input', 'Ueno', ['Ueno', 'Black'])
     
