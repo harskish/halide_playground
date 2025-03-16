@@ -265,8 +265,7 @@ class LibBinder:
         if platform.system() == "Windows":    
             ctypes.windll.kernel32.FreeLibrary(ctypes.c_void_p(handle))
         elif platform.system() == 'Darwin':
-            ret = ctypes.cdll.LoadLibrary("libSystem.dylib").dlclose(handle)
-            print(ret)
+            assert ctypes.cdll.LoadLibrary("libSystem.dylib").dlclose(handle) == 0
         elif platform.system() == 'Linux':
             ctypes.cdll.LoadLibrary("libdl.so").dlclose(handle)
         else:

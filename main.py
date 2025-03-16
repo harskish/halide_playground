@@ -8,7 +8,7 @@ import halide as hl
 import numpy as np
 import time
 from PIL import Image
-from glfw import KEY_F5, KEY_LEFT_CONTROL, KEY_S
+from glfw import KEY_LEFT_SUPER, KEY_LEFT_CONTROL, KEY_S
 from pyviewer.toolbar_viewer import AutoUIViewer
 from pyviewer.params import *
 from halide_ffi_ctypes import LibBinder, Buffer
@@ -37,7 +37,7 @@ def run_in_vs2022_cmd(*args, cwd=None, shell=False):
 
 @strict_dataclass
 class CommonState(ParamContainer):
-    kernel: Param = EnumParam('Kernel', 'write', ['write', 'blur'])
+    kernel: Param = EnumParam('Kernel', 'blur', ['write', 'blur'])
     out_WH: Param = Int2Param('Output (W, H)', (1024, 681), 32, 4096)
     input: Param = EnumSliderParam('Input', 'Ueno', ['Ueno', 'Black'])
     
@@ -195,7 +195,8 @@ class Viewer(AutoUIViewer):
         self.editor.render(f"{self.state.kernel}.cpp")
 
     def compute(self):
-        if self.v.keydown(KEY_LEFT_CONTROL) and self.v.keyhit(KEY_S):
+        mod_key = KEY_LEFT_SUPER if platform.system() == 'Darwin' else KEY_LEFT_CONTROL
+        if self.v.keydown(mod_key) and self.v.keyhit(KEY_S):
             self.editor_save_action()
             buff = self.recompile_and_run()
             return buff.numpy_hwc()
