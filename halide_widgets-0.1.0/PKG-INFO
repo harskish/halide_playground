@@ -1,0 +1,12 @@
+Metadata-Version: 2.3
+Name: halide-widgets
+Version: 0.1.0
+Summary: Add your description here
+License-File: LICENSE
+Requires-Python: >=3.10
+Requires-Dist: halide==19.0.0.dev36
+Requires-Dist: ipython>=8.27.0
+Description-Content-Type: text/markdown
+
+# halide-widgets
+A collection of utilities for interactive plotting of Halide functions.
