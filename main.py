@@ -77,6 +77,7 @@ class Viewer(AutoUIViewer):
         return int(round(600 * self.v.ui_scale))
     
     def recompile(self):
+        self.set_window_title('Recompiling...')
         filepath = Path(f'examples/{self.state.kernel}.cpp')
         stem = filepath.stem
         basename = Path('.') / 'build' / stem # relative to examples/
@@ -106,7 +107,7 @@ class Viewer(AutoUIViewer):
             else:
                 self.prev_kernel_contents[self.state.kernel] = contents
         else:
-            print('Contents identical!')
+            pass #print('Contents identical!')
 
         self.binder.prepare(*self.state.out_WH, self.out_ch)
         self.vars = self.binder.bind("render", libname_abs.as_posix(), self.args)
@@ -145,11 +146,16 @@ class Viewer(AutoUIViewer):
         # Label contains kernel name => unique widgets
         for k in new_params:
            if k in self.params and isinstance(new_params[k], Param):
-               new_params[k] = self.params[k] # copy old Param object over, keeping state
+               p = new_params[k]
+               p.value = max(p.min, min(self.params[k].value, p.max)) # copy value, update ranges
         
         # Atomically replace
         self.params = new_params
-        
+    
+    def status(self, msg, end='\n'):
+        print(msg, end=end)
+        self.set_window_title(msg.strip())
+
     def run_pipeline(self):
         self.args.clear() # haldle kept by binder, cannot replace
         for k, meta in zip(self.params, self.vars):
@@ -159,9 +165,13 @@ class Viewer(AutoUIViewer):
             self.args[name] = meta.cast_fun(value) if hasattr(meta, 'cast_fun') else value
         
         t0 = time.perf_counter()
-        print(f'Calling {self.state.kernel}...', end='')
+        self.status(f'{self.state.kernel}: ...', end='')
         outbuf, _ = self.binder.call() # TODO: new args as input?
-        print(f'done ({time.perf_counter() - t0:.2f}s)')
+        dt = time.perf_counter() - t0
+        if dt > 1:
+            self.status(f'\r{self.state.kernel}: {dt:.2f}s')
+        else:
+            self.status(f'\r{self.state.kernel}: {dt*1000:.1f}ms')
 
         return outbuf
 
@@ -179,7 +189,6 @@ class Viewer(AutoUIViewer):
             print('Kernel selection changed during save, aborting')
             return
         pth.write_text(new_src)
-        print('Saved', pth)
 
     def draw_toolbar(self):
         for k, v in self.params.items():
@@ -200,7 +209,7 @@ class Viewer(AutoUIViewer):
         # https://github.com/BalazsJako/ImGuiColorTextEdit/blob/0a88824f7de8d0bd11d8419066caa7d3469395c4/TextEditor.cpp#L702C17-L702C38
         # imgui.get_io().config_mac_osx_behaviors = True
         mod_key = KEY_LEFT_SUPER if platform.system() == 'Darwin' else KEY_LEFT_CONTROL
-        if self.v.keydown(mod_key) and self.v.keyhit(KEY_S):
+        if self.v.keyhit(KEY_S) and self.v.keydown(mod_key): # S first to clear state
             self.editor_save_action()
             buff = self.recompile_and_run()
             return buff.numpy_hwc()

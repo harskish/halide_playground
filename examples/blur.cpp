@@ -8,9 +8,8 @@ Var x, y, c;
 Func ip;
 ip(x, y, c) = cast<float>(BoundaryConditions::repeat_edge(input)(x, y, c));
 
-Param<int> radius("radius", 5, 1, 21);
+Param<int> radius("radius", 5, 1, 35);
 
-//RDom r(-radius, radius, -radius, radius);
 RDom r(-(radius/2), radius, -(radius/2), radius);
 //RDom r(-(radius/2), radius, 0, 1);
 //RDom r(0, 1, -(radius/2), radius);
@@ -29,9 +28,7 @@ result(x, y, c) = cast<uint8_t>(sum(ip(x + r.x, y + r.y, c) * rweight(r.x, r.y))
 
 //ip(x, y, c) = select(x == 0 & y == 0 & c == 0, 255, ip(x, y, c));
 
-
-//result(x, y, c) = cast<uint8_t>(ip(x, y, c));
-//result(0, 0, 0) = 0;
-
 rweight.compute_root();
-result.parallel(y, 2).vectorize(x, 4);
+result.parallel(y, 2).vectorize(x, 8);
+
+return result;
