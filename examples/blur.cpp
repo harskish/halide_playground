@@ -1,7 +1,7 @@
 // Copyright 2015 Adobe Systems Incorporated
 // All Rights Reserved.
 
-ImageParam input(type_of<uint8_t>(), 3, "image 1");
+ImageParam input(type_of<uint8_t>(), 3, "image");
 
 Var x, y, c;
 

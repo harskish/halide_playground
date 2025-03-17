@@ -1,6 +1,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+// Requires weak linkage support
+// Alternative: halide_set_error_handler
 void halide_error(void *user_context, const char *msg)
 {
     if (user_context) {

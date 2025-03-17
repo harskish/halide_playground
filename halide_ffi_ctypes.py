@@ -52,6 +52,7 @@ class HalideBufferU16(Structure):
         ("padding", c_void_p)
     ]
 
+# https://github.com/halide/Halide/commit/d2d2f846ed51721d2cc1679b4b3e95b315d03e67
 class HalideFilterArgument(Structure):
     _fields_ = [
         ("name", c_char_p),
@@ -177,8 +178,8 @@ def make_caster(type, bits):
     if bits == 1:
         return lambda buf: None if not buf else bool(ctypes.cast(buf, POINTER(ctypes.c_int8))[0])
     
-    reader = make_dtype(type, bits)
-    return lambda buf: reader(buf)
+    dtype = make_dtype(type, bits)
+    return lambda buf: dtype(buf)
 
 def convert_argument_struct(ma):
     type = ["int", "uint", "float", "handle"][ma.type.code]
@@ -320,9 +321,13 @@ class LibBinder:
         params, output_dtype = gather_params(metadata.arguments, metadata.num_arguments)
         vars = gather_vars(metadata.arguments, metadata.num_arguments)
 
+        assert ctypes.sizeof(ctypes.c_void_p) == 8
+        params[0] = POINTER(ctypes.c_char)
+
         boundfn = ctypes.CFUNCTYPE(ctypes.c_int, *params)(rawfn)
 
-        error_buffer = create_string_buffer(4096)
+        error_buffer = (ctypes.c_char * 4096)()
+        #error_buffer = create_string_buffer(4096) # ctypes array of c_char.
         was_error = True
 
         def render_function():
@@ -330,11 +335,18 @@ class LibBinder:
             if was_error:
                 error_buffer.value = b'\0' * 4096
 
-            result = [None] #[byref(error_buffer)]
+            result = [error_buffer] # byref: (((char *)&obj) + offset)
             for arg in vars:
                 result.append(args[arg.name])
             result.append(self.output_buffer.buffer)
 
+            assert len(result) == len(params)
+
+            #boundfn.argtypes = (*boundfn.argtypes[:3], ctypes.c_float, boundfn.argtypes[4])
+
+            #float_value = ctypes.c_float(3.14)
+            #result[4] = ctypes.c_long(0)
+            
             code = boundfn(*result)
             was_error = code != 0
 

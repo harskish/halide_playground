@@ -40,8 +40,8 @@ def run_in_vs2022_cmd(*args, cwd=None, shell=False):
 
 @strict_dataclass
 class CommonState(ParamContainer):
-    kernel: Param = EnumParam('Kernel', 'fuji_debayer', ['write', 'blur', 'fuji_debayer'])
-    out_WH: Param = Int2Param('Output (W, H)', (1024, 681), 32, 4096)
+    kernel: Param = EnumParam('Kernel', 'write', ['write', 'blur', 'fuji_debayer'])
+    out_WH: Param = Int2Param('Output (W, H)', (512, 512), 32, 4096)
     input: Param = EnumSliderParam('Input', 'Ueno', ['Ueno', 'Black'])
     
 class Viewer(AutoUIViewer):
@@ -120,38 +120,55 @@ class Viewer(AutoUIViewer):
         self.recompile()
         return self.run_pipeline()
     
-    def load_raw(self, path):
-        raw = rawpy.imread(path)
-        raw_cfa = raw.raw_image_visible # uint16, Bayer grid
-        rotated = np.rot90(raw_cfa, k={3: 2, 5: 1, 6: 3}.get(raw.sizes.flip, 0))
-        return rotated
+    def buffers_fuji_debayer(self):
+        raw = rawpy.imread('C:/Users/Erik/code/isp/data/20240804_144851.RAF') # HxW
+        rotate = lambda arr: np.rot90(arr, k={3: 2, 5: 1, 6: 3}.get(raw.sizes.flip, 0))
+        return {
+            'cfa': rotate(raw.raw_image_visible)[..., None].copy(), # as HWC
+            'colors': rotate(raw.raw_colors_visible)[..., None].copy(),
+            'color_desc': raw.color_desc.decode(), # RGBG
+            'pattern': raw.raw_pattern.copy(), # 6x6
+            'white_level': raw.white_level,
+            'black_level': raw.black_level_per_channel[0],
+            'camera_whitebalance_r': raw.camera_whitebalance[0],
+            'camera_whitebalance_g': raw.camera_whitebalance[1],
+            'camera_whitebalance_b': raw.camera_whitebalance[2],
+            'sizes': raw.sizes._asdict(),
+        }
     
     @lru_cache
-    def get_input_hwc(self, kernel, input):
+    def get_buffers(self, kernel, input):
+        """Get dict of input buffers required for pipeline"""
         if kernel == 'fuji_debayer':
-            np_cfa = self.load_raw('C:/Users/Erik/code/isp/data/20240804_144851.RAF') # HxW
-            return np_cfa[..., None].copy() # as HWC
+            return self.buffers_fuji_debayer()
         if input == 'Ueno':
-            return self.input_img
+            return {'image': self.input_img}
         elif input == 'Black':
-            return np.zeros_like(self.input_img)
+            return { 'image': np.zeros_like(self.input_img) }
         else:
             raise ValueError(f"Unknown input: {input}")
     
     def setup_widgets(self):
+        buffers = self.get_buffers(self.state.kernel, self.state.input)
+        
         new_params = {}
         for v in self.vars:
             label = f'{v.name}##{self.state.kernel}'
             if v.buffer:
-                input = self.get_input_hwc(self.state.kernel, self.state.input)
+                input = buffers[v.name]
                 H, W, C = input.shape
                 buff: Buffer = v.make_buffer(W, H, C, dtype=np.ctypeslib.as_ctypes_type(input.dtype))
                 buff.from_numpy(input)
-                new_params[v.name] = SimpleNamespace(value=buff.buffer) # shared across kernels. TODO: ConstantParam?
+                new_params[label] = SimpleNamespace(value=buff.buffer) # shared across kernels. TODO: ConstantParam?
+            elif v.name in buffers:
+                # Params with constant values, don't need sliders
+                new_params[label] = SimpleNamespace(value=buffers[v.name])
             elif v.type == 'float':
                 new_params[label] = FloatParam(label, v.default, v.min, v.max)
             elif v.type == 'int':
                 new_params[label] = IntParam(label, v.default, v.min, v.max)
+            elif v.type == 'uint':
+                new_params[label] = IntParam(label, v.default, max(0, v.min), v.max)
             else:
                 raise ValueError(f"Unhandled variable: {v}")
     
