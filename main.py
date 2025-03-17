@@ -1,4 +1,5 @@
 from collections import defaultdict
+from functools import lru_cache
 import os
 import platform
 from pathlib import Path
@@ -12,6 +13,8 @@ from glfw import KEY_LEFT_SUPER, KEY_LEFT_CONTROL, KEY_S
 from pyviewer.toolbar_viewer import AutoUIViewer
 from pyviewer.params import *
 from halide_ffi_ctypes import LibBinder, Buffer
+import rawpy
+import ctypes
 
 from pyviewer.imgui_themes import color_uint as hex_color
 from imgui_bundle import imgui, imgui_md # type: ignore
@@ -37,7 +40,7 @@ def run_in_vs2022_cmd(*args, cwd=None, shell=False):
 
 @strict_dataclass
 class CommonState(ParamContainer):
-    kernel: Param = EnumParam('Kernel', 'blur', ['write', 'blur'])
+    kernel: Param = EnumParam('Kernel', 'fuji_debayer', ['write', 'blur', 'fuji_debayer'])
     out_WH: Param = Int2Param('Output (W, H)', (1024, 681), 32, 4096)
     input: Param = EnumSliderParam('Input', 'Ueno', ['Ueno', 'Black'])
     
@@ -108,33 +111,43 @@ class Viewer(AutoUIViewer):
                 self.prev_kernel_contents[self.state.kernel] = contents
         else:
             pass #print('Contents identical!')
-
-        self.binder.prepare(*self.state.out_WH, self.out_ch)
-        self.vars = self.binder.bind("render", libname_abs.as_posix(), self.args)
+        
+        self.vars, out_dtype = self.binder.bind("render", libname_abs.as_posix(), self.args)
+        self.binder.prepare(*self.state.out_WH, self.out_ch, out_dtype)
         self.setup_widgets()
     
     def recompile_and_run(self):
         self.recompile()
         return self.run_pipeline()
     
-    def get_input(self):
-        if self.state.input == 'Ueno':
+    def load_raw(self, path):
+        raw = rawpy.imread(path)
+        raw_cfa = raw.raw_image_visible # uint16, Bayer grid
+        rotated = np.rot90(raw_cfa, k={3: 2, 5: 1, 6: 3}.get(raw.sizes.flip, 0))
+        return rotated
+    
+    @lru_cache
+    def get_input_hwc(self, kernel, input):
+        if kernel == 'fuji_debayer':
+            np_cfa = self.load_raw('C:/Users/Erik/code/isp/data/20240804_144851.RAF') # HxW
+            return np_cfa[..., None].copy() # as HWC
+        if input == 'Ueno':
             return self.input_img
-        elif self.state.input == 'Black':
+        elif input == 'Black':
             return np.zeros_like(self.input_img)
         else:
-            raise ValueError(f"Unknown input: {self.state.input}")
+            raise ValueError(f"Unknown input: {input}")
     
     def setup_widgets(self):
         new_params = {}
         for v in self.vars:
             label = f'{v.name}##{self.state.kernel}'
             if v.buffer:
-                H, W, C = self.input_img.shape
-                buff: Buffer = v.make_buffer(W, H, C)
-                buff.from_numpy(self.get_input())
-                # TODO: ConstantParam?
-                new_params[v.name] = SimpleNamespace(value=buff.buffer) # shared across kernels
+                input = self.get_input_hwc(self.state.kernel, self.state.input)
+                H, W, C = input.shape
+                buff: Buffer = v.make_buffer(W, H, C, dtype=np.ctypeslib.as_ctypes_type(input.dtype))
+                buff.from_numpy(input)
+                new_params[v.name] = SimpleNamespace(value=buff.buffer) # shared across kernels. TODO: ConstantParam?
             elif v.type == 'float':
                 new_params[label] = FloatParam(label, v.default, v.min, v.max)
             elif v.type == 'int':

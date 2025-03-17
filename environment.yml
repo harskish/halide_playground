@@ -6,6 +6,7 @@ dependencies:
   - pip
   - pip:
     - halide==19.0.0
+    - rawpy==0.24.0
     - -e ../pyviewer
 
 # conda env create -f environment.yml

@@ -4,11 +4,19 @@ from types import SimpleNamespace
 import platform
 import numpy as np
 
+hl_type_codes = {
+    'int': 0,     # signed integers
+    'uint': 1,    # unsigned integers
+    'float': 2,   # IEEE floating point numbers
+    'handle': 3,  # opaque pointer type (void *)
+    'bfloat': 4,  # bfloat 16-bit format
+}
+
 class HalideType(Structure):
     _fields_ = [
-        ("code", c_uint8),
-        ("bits", c_uint8),
-        ("lanes", c_uint16)
+        ("code", c_uint8),  # See hl_type_codes above
+        ("bits", c_uint8),  # Bits of precision of a single scalar value of this type
+        ("lanes", c_uint16) # How many elements in a vector, 1 for scalar types
     ]
 
 class HalideDimension(Structure):
@@ -19,11 +27,24 @@ class HalideDimension(Structure):
         ("flags", c_uint32)
     ]
 
-class HalideBuffer(Structure):
+# TODO: single buffer type with void* host?
+class HalideBufferU8(Structure):
     _fields_ = [
         ("dev", c_uint64),
         ("device_interface", c_void_p),
         ("host", POINTER(c_uint8)),
+        ("flags", c_uint64),
+        ("type", HalideType),
+        ("dimensions", c_int32),
+        ("dimension", POINTER(HalideDimension)),
+        ("padding", c_void_p)
+    ]
+
+class HalideBufferU16(Structure):
+    _fields_ = [
+        ("dev", c_uint64),
+        ("device_interface", c_void_p),
+        ("host", POINTER(c_uint16)),
         ("flags", c_uint64),
         ("type", HalideType),
         ("dimensions", c_int32),
@@ -54,15 +75,18 @@ class HalideFilterMetadata(Structure):
     ]
 
 class Buffer:
-    def __init__(self, width, height, channels):
-        self.buffer = HalideBuffer()
-        self.array = (c_uint8 * (width * height * channels))()
+    def __init__(self, width, height, channels, dtype):
+        assert issubclass(dtype, ctypes._SimpleCData), 'dtype must be a ctypes type'
+        buffer_type = { c_uint8: HalideBufferU8, c_uint16: HalideBufferU16 }[dtype]
+        self.buffer = buffer_type()
+        self.array = (dtype * (width * height * channels))()
+        self.dtype = dtype
 
         self.buffer.dev = 0
         self.buffer.device_interface = None
         self.buffer.host = self.array
         self.buffer.flags = 0
-        self.buffer.type = HalideType(1, 8, 1) # code, bits, lanes
+        self.buffer.type = HalideType(hl_type_codes['uint'], ctypes.sizeof(dtype) * 8, 1) # code, bits, lanes
         self.buffer.dimensions = 3
 
         # https://github.com/halide/atom/blob/523238d9/lib/halide-lib-binder.coffee#L67
@@ -118,52 +142,42 @@ class Buffer:
         # "By default halide assumes the first dimension (x in this case) is dense in memory (stride 1)"
         # https://github.com/harskish/anyscale/blob/b29a5c01/lib/halide_ops/halide_pt_op.py#L51
         #assert np_array_chw.ndim != 3 or np_array_chw.shape[0] in [1, 3, 4], 'Halide expects CHW tensors'
-        assert np_array_hwc.dtype == np.uint8
+        assert np.ctypeslib.as_ctypes_type(np_array_hwc.dtype) == self.dtype
         assert np_array_hwc.shape == (self.height, self.width, self.channels)
         np_array_chw = np.transpose(np_array_hwc, (2, 0, 1)).copy()
         ctypes.memmove(ctypes.byref(self.array), np_array_chw.ctypes.data, np_array_chw.nbytes)
 
-def make_buffer(width, height, channels):
-    return Buffer(width, height, channels)
+def make_buffer(width, height, channels, dtype):
+    return Buffer(width, height, channels, dtype)
+
+def make_dtype(type, bits):
+    if type == "int" and bits == 8:
+        return ctypes.c_int8
+    elif type == "uint" and bits == 8:
+        return ctypes.c_uint8
+    elif type == "int" and bits % 8 == 0:
+        return getattr(ctypes, f"c_int{bits}")
+    elif type == "uint" and bits % 8 == 0:
+        return getattr(ctypes, f"c_uint{bits}")
+    elif type == "float" and bits == 32:
+        return ctypes.c_float
+    elif type == "float" and bits == 64:
+        return ctypes.c_double
+    else:
+        raise ValueError(f"invalid type: {type} {bits}")
 
 def make_dereferencer(type, bits):
     if bits == 1:
         return lambda buf: None if not buf else bool(ctypes.cast(buf, POINTER(ctypes.c_int8))[0])
-    elif type == "int" and bits == 8:
-        reader = ctypes.c_int8
-    elif type == "uint" and bits == 8:
-        reader = ctypes.c_uint8
-    elif type == "int" and bits % 8 == 0:
-        reader = getattr(ctypes, f"c_int{bits}")
-    elif type == "uint" and bits % 8 == 0:
-        reader = getattr(ctypes, f"c_uint{bits}")
-    elif type == "float" and bits == 32:
-        reader = ctypes.c_float
-    elif type == "float" and bits == 64:
-        reader = ctypes.c_double
-    else:
-        raise ValueError(f"invalid type: {type} {bits}")
-
+    
+    reader = make_dtype(type, bits)
     return lambda buf: None if not buf else ctypes.cast(buf, POINTER(reader))[0]
 
 def make_caster(type, bits):
     if bits == 1:
         return lambda buf: None if not buf else bool(ctypes.cast(buf, POINTER(ctypes.c_int8))[0])
-    elif type == "int" and bits == 8:
-        reader = ctypes.c_int8
-    elif type == "uint" and bits == 8:
-        reader = ctypes.c_uint8
-    elif type == "int" and bits % 8 == 0:
-        reader = getattr(ctypes, f"c_int{bits}")
-    elif type == "uint" and bits % 8 == 0:
-        reader = getattr(ctypes, f"c_uint{bits}")
-    elif type == "float" and bits == 32:
-        reader = ctypes.c_float
-    elif type == "float" and bits == 64:
-        reader = ctypes.c_double
-    else:
-        raise ValueError(f"invalid type: {type} {bits}")
-
+    
+    reader = make_dtype(type, bits)
     return lambda buf: reader(buf)
 
 def convert_argument_struct(ma):
@@ -181,11 +195,13 @@ def convert_argument_struct(ma):
 def gather_params(args, nargs):
     params = []
     outputs = 0
+    out_dtype = None
 
     for i in range(nargs):
         ma = convert_argument_struct(args[i])
-
-        supported_buffer = ma["dimensions"] == 3 and ma["is_int"] and ma["bits"] == 8
+        
+        buffer_types = { 8: HalideBufferU8, 16: HalideBufferU16 }
+        supported_buffer = ma["dimensions"] == 3 and ma["is_int"] and ma["bits"] in [8, 16]
 
         if ma["type"] == "handle":
             if i != 0:
@@ -193,10 +209,11 @@ def gather_params(args, nargs):
 
             params.append(c_void_p)
         elif ma["kind"] == "output" and supported_buffer:
-            params.append(POINTER(HalideBuffer))
+            params.append(POINTER(buffer_types[ma["bits"]]))
+            out_dtype = make_dtype(ma["type"], ma["bits"])
             outputs += 1
         elif ma["kind"] == "input" and supported_buffer:
-            params.append(POINTER(HalideBuffer))
+            params.append(POINTER(buffer_types[ma["bits"]]))
         elif ma["kind"] == "scalar":
             if ma["type"] == "float" and ma["bits"] == 32:
                 params.append(ctypes.c_float)
@@ -212,7 +229,7 @@ def gather_params(args, nargs):
     if outputs != 1:
         raise ValueError(f"Expected exactly one output, got: {outputs}")
 
-    return params
+    return params, out_dtype
 
 def gather_vars(args, nargs):
     vars = []
@@ -225,6 +242,7 @@ def gather_vars(args, nargs):
                 "name": ma["name"],
                 "make_buffer": make_buffer,
                 "buffer": True,
+                "dtype": make_dtype(ma["type"], ma["bits"]),
             }))
         elif ma["kind"] == "scalar" and ma["type"] != "handle":
             dereffer = make_dereferencer(ma["type"], ma["bits"])
@@ -277,12 +295,12 @@ class LibBinder:
         else:
             return None, "No currently bound function."
 
-    def prepare(self, width, height, channels):
+    def prepare(self, width, height, channels, dtype):
         curr = self.output_buffer
-        if curr and curr.width == width and curr.height == height and curr.channels == channels:
+        if curr and curr.width == width and curr.height == height and curr.channels == channels and dtype == curr.dtype:
             return
         print('LibBinder.prepare(): allocating new buffer')
-        self.output_buffer = make_buffer(width, height, channels) # [halide buffer ptr, native buffer]
+        self.output_buffer = make_buffer(width, height, channels, dtype) # [halide buffer ptr, native buffer]
 
     def bind(self, fnname, libpath, args: dict):
         self.close()
@@ -299,7 +317,7 @@ class LibBinder:
         if metadata.version != 1:
             raise ValueError(f"Unknown Filter Metadata version: {metadata.version}")
 
-        params = gather_params(metadata.arguments, metadata.num_arguments)
+        params, output_dtype = gather_params(metadata.arguments, metadata.num_arguments)
         vars = gather_vars(metadata.arguments, metadata.num_arguments)
 
         boundfn = ctypes.CFUNCTYPE(ctypes.c_int, *params)(rawfn)
@@ -327,4 +345,4 @@ class LibBinder:
 
         self.render_function = render_function
 
-        return vars
+        return vars, output_dtype
