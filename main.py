@@ -247,3 +247,11 @@ class Viewer(AutoUIViewer):
 
 if __name__ == '__main__':
     viewer = Viewer('Halide Playground')
+
+
+# Links
+# https://github.com/bobobo1618/halideraw
+# https://github.com/zshipko/halide-runtime
+# https://github.com/dragly/numlide
+# https://github.com/dragly/halide-widgets (https://github.com/dragly?tab=repositories)
+# https://github.com/anuejn/halide_experiments/blob/main/halide_blocks/debayer.py
