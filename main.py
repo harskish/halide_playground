@@ -121,7 +121,7 @@ class Viewer(AutoUIViewer):
         return self.run_pipeline()
     
     def buffers_fuji_debayer(self):
-        raw = rawpy.imread('C:/Users/Erik/code/isp/data/20240804_144851.RAF') # HxW
+        raw = rawpy.imread('/Users/Erik/code/isp/data/20240804_144851.RAF') # HxW
         rotate = lambda arr: np.rot90(arr, k={3: 2, 5: 1, 6: 3}.get(raw.sizes.flip, 0))
         return {
             'cfa': rotate(raw.raw_image_visible)[..., None].copy(), # as HWC
