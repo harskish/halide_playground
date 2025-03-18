@@ -1,5 +1,5 @@
 import ctypes
-from ctypes import c_uint8, c_uint16, c_uint32, c_uint64, c_int32, c_int64, c_void_p, c_char_p, POINTER, Structure, byref, create_string_buffer
+from ctypes import c_float, c_uint8, c_uint16, c_uint32, c_uint64, c_int32, c_int64, c_void_p, c_char_p, POINTER, Structure, byref, create_string_buffer
 from types import SimpleNamespace
 import platform
 import numpy as np
@@ -217,11 +217,15 @@ def gather_params(args, nargs):
             params.append(POINTER(buffer_types[ma["bits"]]))
         elif ma["kind"] == "scalar":
             if ma["type"] == "float" and ma["bits"] == 32:
+                assert ctypes.sizeof(ctypes.c_float) == 32 // 8
                 params.append(ctypes.c_float)
             elif ma["type"] == "float" and ma["bits"] == 64:
+                assert ctypes.sizeof(ctypes.c_double) == 64 // 8
                 params.append(ctypes.c_double)
             elif ma["is_int"] and ma["bits"] > 0 and ma["bits"] % 8 == 0:
-                params.append(getattr(ctypes, f"c_{ma['type']}{ma['bits']}"))
+                ctype = getattr(ctypes, f"c_{ma['type']}{ma['bits']}")
+                assert ctypes.sizeof(ctype) == ma["bits"] // 8
+                params.append(ctype)
             else:
                 raise ValueError(f"Unhandled type: {ma['type']} {ma['bits']}")
         else:
@@ -303,7 +307,7 @@ class LibBinder:
         print('LibBinder.prepare(): allocating new buffer')
         self.output_buffer = make_buffer(width, height, channels, dtype) # [halide buffer ptr, native buffer]
 
-    def bind(self, fnname, libpath, args: dict):
+    def bind(self, fnname, libpath, args: dict):        
         self.close()
 
         self.render_library = ctypes.CDLL(libpath) # RTLD_NOW: always added on Unix-like
@@ -321,10 +325,11 @@ class LibBinder:
         params, output_dtype = gather_params(metadata.arguments, metadata.num_arguments)
         vars = gather_vars(metadata.arguments, metadata.num_arguments)
 
-        assert ctypes.sizeof(ctypes.c_void_p) == 8
-        params[0] = POINTER(ctypes.c_char)
+        #assert ctypes.sizeof(ctypes.c_void_p) == 8
+        #params[0] = POINTER(ctypes.c_char)
 
-        boundfn = ctypes.CFUNCTYPE(ctypes.c_int, *params)(rawfn)
+        rawfn.restype = ctypes.c_int
+        rawfn.argtypes = params
 
         error_buffer = (ctypes.c_char * 4096)()
         #error_buffer = create_string_buffer(4096) # ctypes array of c_char.
@@ -341,19 +346,14 @@ class LibBinder:
             result.append(self.output_buffer.buffer)
 
             assert len(result) == len(params)
-
-            #boundfn.argtypes = (*boundfn.argtypes[:3], ctypes.c_float, boundfn.argtypes[4])
-
-            #float_value = ctypes.c_float(3.14)
-            #result[4] = ctypes.c_long(0)
-            
-            code = boundfn(*result)
+            code = rawfn(*result)
             was_error = code != 0
 
+            err_str = error_buffer.value.decode()
             if code == 0:
-                return self.output_buffer, error_buffer
+                return self.output_buffer, err_str
             else:
-                return None, error_buffer
+                return None, err_str
 
         self.render_function = render_function
 

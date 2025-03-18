@@ -1,6 +1,7 @@
 build\$(STEM).dll: build\$(STEM).obj build\$(STEM).def build\tmp\error_handler.obj
 	$(CXX) build\tmp\error_handler.obj build\$(STEM).obj /link /NODEFAULTLIB:LIBCMT msvcrt.lib /FORCE:MULTIPLE /DLL /out:build\$(STEM).dll /def:build\$(STEM).def
 
+# TODO: weakly linked, but still works on Windows?!!
 build\tmp\error_handler.obj: error_handler.c
 	$(CXX) /c /EHsc /std:c++17 error_handler.c /Fo:$@
 
@@ -22,6 +23,7 @@ build\$(STEM).def:
 	echo	render @1 >> $@
 	echo	render_metadata @2 >> $@
 
+# /c: compile only, no linking
 build\tmp\$(STEM)_fn.obj: build\tmp\$(STEM)_fn.cpp
 	$(CXX) /c /EHsc /std:c++17 /I $(HALIDE_PATH)\include build\tmp\$(STEM)_fn.cpp /Fo:$@
 
@@ -31,6 +33,8 @@ build\tmp\main.obj: main.cpp
 build\tmp\Halide.dll: $(HALIDE_PATH)\bin\Halide.dll
 	copy $(HALIDE_PATH)\bin\Halide.dll build\tmp
 
+# /Fe:<output_path>
+# /EHsc: exception handling = s(tack unwinding), c(-style extern never throw)
 build\tmp\mk_$(STEM).exe: build\tmp\$(STEM)_fn.obj build\tmp\main.obj build\tmp\Halide.dll
 	$(CXX) /EHsc /std:c++17 /I $(HALIDE_PATH)\include /Fe:$@ $(HALIDE_PATH)\lib\Halide.lib build\tmp\$(STEM)_fn.obj build\tmp\main.obj
 

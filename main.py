@@ -40,8 +40,8 @@ def run_in_vs2022_cmd(*args, cwd=None, shell=False):
 
 @strict_dataclass
 class CommonState(ParamContainer):
-    kernel: Param = EnumParam('Kernel', 'write', ['write', 'blur', 'fuji_debayer'])
-    out_WH: Param = Int2Param('Output (W, H)', (512, 512), 32, 4096)
+    kernel: Param = EnumParam('Kernel', 'fuji_debayer', ['write', 'blur', 'fuji_debayer'])
+    out_WH: Param = Int2Param('Output (W, H)', (6032, 4028), 32, 8000)
     input: Param = EnumSliderParam('Input', 'Ueno', ['Ueno', 'Black'])
     
 class Viewer(AutoUIViewer):
@@ -196,12 +196,11 @@ class Viewer(AutoUIViewer):
         
         t0 = time.perf_counter()
         self.status(f'{self.state.kernel}: ...', end='')
-        outbuf, _ = self.binder.call() # TODO: new args as input?
+        outbuf, error_str = self.binder.call() # TODO: new args as input?
         dt = time.perf_counter() - t0
-        if dt > 1:
-            self.status(f'\r{self.state.kernel}: {dt:.2f}s')
-        else:
-            self.status(f'\r{self.state.kernel}: {dt*1000:.1f}ms')
+        time_str = f'{dt:.2f}s' if dt > 1 else f'{dt*1000:.1f}ms'
+        suffix = f'Error - {error_str}' if error_str else time_str
+        self.status(f'\r{self.state.kernel}: {suffix}')
 
         return outbuf
 
@@ -242,7 +241,7 @@ class Viewer(AutoUIViewer):
         if self.v.keyhit(KEY_S) and self.v.keydown(mod_key): # S first to clear state
             self.editor_save_action()
             buff = self.recompile_and_run()
-            return buff.numpy_hwc()
+            return buff.numpy_hwc() if buff is not None else None
         return None # reuse cached
 
 if __name__ == '__main__':
