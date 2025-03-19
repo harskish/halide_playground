@@ -31,7 +31,7 @@ masked(x, y, c) = select(ip_colors(x, y, 0) == c, in_range(x, y, 0) * wb(c), 0);
 //masked(x, y, c) = select(c == 0, masked(x, y, c), 0);
 
 result(x, y, c) = cast<uint16_t>(clamp(col_range * masked(x, y, c), 0, 2048));
-//result(x, y, c) = cast<uint16_t>(clamp(col_range * masked(x, y, c), 0, 65535)); // output: RGB
+//result(x, y, c) = cast<uint16_t>(clamp(col_range * masked(x, y, c), 0, 65535));
 
 //wb.compute_root();
 

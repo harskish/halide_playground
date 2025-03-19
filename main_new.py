@@ -16,6 +16,7 @@ import rawpy
 from pyviewer.gl_viewer import _texture
 import OpenGL.GL as gl
 import threading
+import glfw
 
 import json
 from enum import Enum
@@ -25,6 +26,8 @@ from imgui_bundle.demos_python.demo_utils import demos_assets_folder
 from typing import List
 import threading
 
+from pyviewer.toolbar_viewer import PannableArea
+from pyviewer.utils import normalize_image_data
 from pyviewer.imgui_themes import color_uint as hex_color
 from imgui_bundle import imgui, imgui_md # type: ignore
 from imgui_bundle import imgui_color_text_edit as ed # type: ignore
@@ -60,6 +63,7 @@ class AppState:
     stop_event: threading.Event = threading.Event()
     image: np.ndarray = None
     img_dt: float = 0
+    last_upload_dt: float = 0
     tex_handle: _texture = None # created after GL init
 
 @strict_dataclass
@@ -81,7 +85,9 @@ class Viewer:
         runner_params.app_window_params.window_geometry.size = (1000, 900)
         runner_params.app_window_params.restore_previous_geometry = True
 
-        self.image = None
+        # Normally setting no_mouse_input windows flags on containing window is enough,
+        # but docking (presumably) seems to be capturing mouse input regardless.
+        self.pan_handler = PannableArea(force_mouse_capture=True)
         
         def post_init_fun():
             self.setup_state()
@@ -90,14 +96,19 @@ class Viewer:
         def before_exit():
             del self.app_state.tex_handle
             app_state.stop_event.set()
+        
+        def add_backend_cbk(*args, **kwargs):
+            # Set own glfw callbacks, will be chained by imgui
+            window = glfw.get_current_context()
+            self.pan_handler.set_callbacks(window)
 
         runner_params.callbacks.post_init = post_init_fun
         runner_params.callbacks.before_exit = before_exit
+        runner_params.callbacks.post_init_add_platform_backend_callbacks = add_backend_cbk
 
         self.app_state = app_state
 
         # State exists, start compute thread asap
-        import threading
         compute_thread = threading.Thread(target=self.compute_loop, args=[], daemon=True)
         compute_thread.start()
 
@@ -105,6 +116,7 @@ class Viewer:
         # TODO: probably need to set metal backend first
         # TODO: do in callbacks.post_init_add_platform_backend_callbacks?
         if hello_imgui.has_edr_support():
+            # https://github.com/pthom/hello_imgui/blob/51d850fc/src/hello_imgui_demos/hello_edr/hello_edr.mm
             runner_params.renderer_backend_type = hello_imgui.RendererBackendType.metal
             renderer_backend_options = hello_imgui.RendererBackendOptions()
             renderer_backend_options.request_float_buffer = True
@@ -130,25 +142,24 @@ class Viewer:
         # Docking layout
         runner_params.docking_params = hello_imgui.DockingParams()
         runner_params.docking_params.docking_splits = create_default_docking_splits()
-        
+
         # Text editor: left-hand side
-        text_editor_window = hello_imgui.DockableWindow()
+        text_editor_window = hello_imgui.DockableWindow(can_be_closed_=False)
         text_editor_window.label = "Text editor"
         text_editor_window.dock_space_name = "CommandSpace"
         text_editor_window.gui_function = self.draw_text_editor
 
         # Output image: right top
-        output_window = hello_imgui.DockableWindow()
+        output_window = hello_imgui.DockableWindow(can_be_closed_=False)
         output_window.label = "Pipeline Output"
         output_window.dock_space_name = "MainDockSpace"
-        output_window.gui_function = lambda: draw_output(app_state)
+        output_window.gui_function = self.draw_output
 
         # Param sliders: right bottom
-        widgets_window = hello_imgui.DockableWindow()
-        #widgets_window.call_begin_end = False # calling imgui.{begin/end} manually
+        widgets_window = hello_imgui.DockableWindow(can_be_closed_=False)
         widgets_window.label = "Input Params"
         widgets_window.dock_space_name = "CommandSpace2"
-        widgets_window.gui_function = self.draw_toolbar #lambda: draw_inputs(app_state) #self.draw_toolbar
+        widgets_window.gui_function = self.draw_toolbar
 
         dockable_windows = [
             text_editor_window,
@@ -193,8 +204,9 @@ class Viewer:
         palette[ed.TextEditor.PaletteIndex.number] = imgui.IM_COL32(*hex_color("#CAC074")[::-1]) # endianness mismatch?
         self.editor.set_palette(palette)
 
-        self.app_state.tex_handle = _texture(gl.GL_LINEAR, gl.GL_LINEAR)
+        self.app_state.tex_handle = _texture(gl.GL_NEAREST, gl.GL_NEAREST)
         self.prev_kernel_contents = defaultdict(str)
+        self.should_recompile = True # set by UI thread, reacted to by compute thread
     
     def update_image(self, arr):
         assert isinstance(arr, np.ndarray)
@@ -202,6 +214,19 @@ class Viewer:
         # Eventually uploaded by UI thread
         self.app_state.image = normalize_image_data(arr, 'uint8')
         self.app_state.img_dt = time.monotonic()
+
+    def draw_output(self):
+        # Need to do upload from main thread
+        if self.app_state.img_dt > self.app_state.last_upload_dt:
+            self.app_state.tex_handle.upload_np(self.app_state.image)
+            self.app_state.last_upload_dt = time.monotonic()
+        
+        # Reallocate if window size has changed
+        if self.app_state.image is not None:
+            tH, tW, _ = self.app_state.image.shape
+            cW, cH = map(int, imgui.get_content_region_avail())
+            canvas_tex = self.pan_handler.draw_to_canvas(self.app_state.tex_handle.tex, tW, tH, cW, cH)
+            imgui.image(canvas_tex, (cW, cH))
 
     def set_window_title(self, title):
         pass
@@ -367,7 +392,17 @@ class Viewer:
             self.editor_sources[self.editor_active_kernel] = self.editor.get_text() # write updated back
             self.editor.set_text(self.editor_sources[self.state.kernel])
             self.editor_active_kernel = self.state.kernel
+
+        # Detect save action
+        mod_key = imgui.Key.left_ctrl # actually means cmd on macOS...?!
+        if imgui.is_key_pressed(imgui.Key.s) and imgui.is_key_down(mod_key):
+            self.editor_save_action()
+            self.should_recompile = True
         
+        # imgui_bundle version seems broken:
+        # https://github.com/pthom/ImGuiColorTextEdit/blob/165ca5fe8be900884c88b90f16955bbf848b23ee/TextEditor.cpp#L2027
+        # https://github.com/BalazsJako/ImGuiColorTextEdit/blob/0a88824f7de8d0bd11d8419066caa7d3469395c4/TextEditor.cpp#L702C17-L702C38
+        # imgui.get_io().config_mac_osx_behaviors = True
         imgui.push_font(imgui_md.get_code_font())
         self.editor.render(f"{self.state.kernel}.cpp")
         imgui.pop_font()
@@ -383,12 +418,6 @@ class Viewer:
         self.app_state.start_event.wait(timeout=None)
         print('Compute thread: start event received')
 
-        # Initial compile
-        print('Compute thread: initial pipeline compile')
-        arr = self.recompile_and_run()
-        if arr is not None:
-            self.update_image(arr)
-
         while not self.app_state.stop_event.is_set():
             self.compute()
             time.sleep(0.01)
@@ -396,18 +425,12 @@ class Viewer:
         print('Compute thread: received stop event, exiting')
 
     def compute(self):
-        # imgui_bundle version seems broken:
-        # https://github.com/pthom/ImGuiColorTextEdit/blob/165ca5fe8be900884c88b90f16955bbf848b23ee/TextEditor.cpp#L2027
-        # https://github.com/BalazsJako/ImGuiColorTextEdit/blob/0a88824f7de8d0bd11d8419066caa7d3469395c4/TextEditor.cpp#L702C17-L702C38
-        # imgui.get_io().config_mac_osx_behaviors = True
-        
-        # TODO: currently framerate dependent (key_pressed only valid for one frame)
-        mod_key = imgui.Key.left_super if platform.system() == 'Darwin' else imgui.Key.left_ctrl
-        if imgui.is_key_pressed(imgui.Key.s) and imgui.is_key_down(mod_key):
-            self.editor_save_action()
+        if self.should_recompile:
             ret = self.recompile_and_run()
             if ret is not None:
                 self.update_image(ret)
+            self.should_recompile = False
+
         return None # reuse cached
 
 # Links
@@ -447,46 +470,6 @@ def load_fonts(app_state: AppState):  # This is called by runnerParams.callbacks
     font_loading_params_color.load_color = True
     app_state.color_font = hello_imgui.load_font("fonts/Playbox/Playbox-FREE.otf", 24., font_loading_params_color)
 
-#_images = defaultdict(lambda: _texture(gl.GL_LINEAR, gl.GL_LINEAR))
-_last_upload_dt = time.monotonic()
-def draw_output(app_state: AppState):
-    global _last_upload_dt
-
-    # Need to do upload from main thread
-    if app_state.img_dt > _last_upload_dt:
-        app_state.tex_handle.upload_np(app_state.image)
-        _last_upload_dt = time.monotonic()
-    
-    imgui.image(app_state.tex_handle.tex, imgui.get_content_region_avail())
-
-def draw_inputs(app_state: AppState):
-    # emulate C/C++ static variable: we will store some static variables
-    # as attributes of the function
-    statics = draw_inputs
-
-    # Apply the theme before opening the window
-    #tweaked_theme = hello_imgui.ImGuiTweakedTheme()
-    #tweaked_theme.theme = hello_imgui.ImGuiTheme_.white_is_white
-    #tweaked_theme.tweaks.rounding = 0.0
-    #hello_imgui.push_tweaked_theme(tweaked_theme)
-
-    # Open the window
-    if imgui.begin("Pipeline inputs"):
-        imgui.push_font(app_state.title_font)
-        imgui.text("Pipeline inputs")
-        imgui.text(f"Counter: {app_state.counter}")
-        imgui.pop_font()
-
-    # Close the window
-    imgui.end()
-
-    # Restore the theme
-    #hello_imgui.pop_tweaked_theme()
-
-def draw_text_editor(app_state: AppState):
-    imgui.text('<Kernel name>.cpp')
-    imgui.separator()
-
 def create_default_docking_splits() -> List[hello_imgui.DockingSplit]:
     #    ____________________________________________
     #    |         |                                |
@@ -519,34 +502,8 @@ def setup_my_theme():
     imgui.get_style().item_spacing = (6, 4)
     imgui.get_style().set_color_(imgui.Col_.text, ImVec4(0.8, 0.8, 0.85, 1.0))
 
-
-import glfw
-from pyviewer.utils import normalize_image_data
-_gl_context_lock = threading.Lock() # mp.Lock()
-
-@contextmanager
-def gl_upload_lock(window, strict=True):
-    context_manager = None
-    try:
-        _gl_context_lock.acquire()
-        glfw.make_context_current(window) # glfw.create_window output
-        context_manager = _gl_context_lock
-    except glfw.GLFWError as e:
-        reason = {65544: 'No monitor found'}.get(e.error_code, 'unknown')
-        print(f'{str(e)} (code 0x{e.error_code:x}: "{reason}")')
-        context_manager = nullcontext
-        if strict:
-            raise e
-    finally:
-        yield context_manager
-
-        # Cleanup after caller is done
-        glfw.make_context_current(None)
-        _gl_context_lock.release()
-
 # Based on:
 # https://github.com/pthom/imgui_bundle/blob/main/bindings/pyodide_web_demo/examples/demo_docking.py
 
 if __name__ == "__main__":
-    #main()
     viewer = Viewer()
