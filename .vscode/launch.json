@@ -9,6 +9,12 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main.py",
+        },
+        {
+            "name": "Docking test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main_new.py",
         }
     ]
 }
