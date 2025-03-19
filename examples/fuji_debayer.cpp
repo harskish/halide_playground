@@ -1,6 +1,6 @@
 ImageParam cfa(type_of<uint16_t>(), 3, "cfa"); // raw fca image
 ImageParam colors(type_of<uint8_t>(), 3, "colors"); // color idx per pixel (order: RGBG)
-ImageParam pattern(type_of<uint8_t>(), 3, "pattern"); // smallest repeatable bayer pattern, 6x6 for xtrans
+ImageParam pattern(type_of<uint8_t>(), 3, "pattern"); // bayer pattern, 6x6 for x-trans
 
 Param<int> white_level("white_level", 1023, 0, 65535);
 Param<int> black_level("black_level", 1023, 0, 65535);
@@ -28,9 +28,9 @@ Func masked;
 masked(x, y, c) = select(ip_colors(x, y, 0) == c, in_range(x, y, 0) * wb(c), 0);
 
 // Debug single color channel
-//masked(x, y, c) = select(c == 1, masked(x, y, c), 0);
+//masked(x, y, c) = select(c == 0, masked(x, y, c), 0);
 
-result(x, y, c) = cast<uint16_t>(clamp(col_range * masked(x, y, c), 0, 3048));
+result(x, y, c) = cast<uint16_t>(clamp(col_range * masked(x, y, c), 0, 2048));
 //result(x, y, c) = cast<uint16_t>(clamp(col_range * masked(x, y, c), 0, 65535)); // output: RGB
 
 //wb.compute_root();
