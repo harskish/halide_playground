@@ -36,7 +36,7 @@ def run_in_vs2022_cmd(*args, cwd=None, shell=False):
     vcvarsall_path = f"{vs_path}/VC/Auxiliary/Build/vcvars64.bat"
     assert os.path.exists(vs_path), f'Could not find Visual Studio install at "{vs_path}"'
     assert os.path.exists(vcvarsall_path), 'Could not find vcvars64.bat'
-    return subprocess.run([vcvarsall_path, '&&', *args], cwd=cwd, shell=shell)
+    return subprocess.run([vcvarsall_path, '&&', *args], cwd=cwd, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 @strict_dataclass
 class CommonState(ParamContainer):
@@ -71,15 +71,17 @@ class Viewer(AutoUIViewer):
         self.editor.set_palette(palette)
 
         self.prev_kernel_contents = defaultdict(str)
-        ret = self.recompile_and_run()
-        self.update_image(ret.numpy_hwc())
+        arr = self.recompile_and_run()
+        if arr is not None:
+            self.update_image(arr)
     
     # Override to be extra wide
     @property
     def toolbar_width(self):
         return int(round(600 * self.v.ui_scale))
     
-    def recompile(self):
+    def recompile(self) -> str:
+        """Recompile the current kernel, return potential error message"""
         self.set_window_title('Recompiling...')
         filepath = Path(f'examples/{self.state.kernel}.cpp')
         stem = filepath.stem
@@ -101,7 +103,14 @@ class Viewer(AutoUIViewer):
             os.makedirs('examples/build/tmp', exist_ok=True)
             
             if platform.system() == 'Windows':
-                run_in_vs2022_cmd('nmake', '/f', 'NMakefile', str(libname_rel), cwd='examples')
+                if len(os.environ['PATH']) > 7_000:
+                    print('Warning: PATH very long, nmake might fail')
+                ret = run_in_vs2022_cmd('nmake', '/f', 'NMakefile', str(libname_rel), cwd='examples')
+                if ret.returncode != 0:
+                    err_msg = ret.stderr.decode().strip()
+                    #print(f'STDERR:\n"{err_msg}"')
+                    return err_msg
+                print('STDOUT:', ret.stdout.decode())
             else:
                 subprocess.run(['make', str(libname_rel)], cwd='examples')
 
@@ -115,9 +124,14 @@ class Viewer(AutoUIViewer):
         self.vars, out_dtype = self.binder.bind("render", libname_abs.as_posix(), self.args)
         self.binder.prepare(*self.state.out_WH, self.out_ch, out_dtype)
         self.setup_widgets()
+        return '' # no error
     
     def recompile_and_run(self):
-        self.recompile()
+        error_msg = self.recompile()
+        if error_msg:
+            msg_single_line = error_msg.replace('\n', ' ').replace('\r', '')
+            self.status(f'\r{self.state.kernel}: {msg_single_line}')
+            return None
         return self.run_pipeline()
     
     def buffers_fuji_debayer(self):
@@ -202,7 +216,7 @@ class Viewer(AutoUIViewer):
         suffix = f'Error - {error_str}' if error_str else time_str
         self.status(f'\r{self.state.kernel}: {suffix}')
 
-        return outbuf
+        return outbuf.numpy_hwc() if outbuf is not None else None
 
     def editor_save_action(self):
         """Editor save action, triggered by ctrl+s or cmd+s."""
@@ -240,8 +254,7 @@ class Viewer(AutoUIViewer):
         mod_key = KEY_LEFT_SUPER if platform.system() == 'Darwin' else KEY_LEFT_CONTROL
         if self.v.keyhit(KEY_S) and self.v.keydown(mod_key): # S first to clear state
             self.editor_save_action()
-            buff = self.recompile_and_run()
-            return buff.numpy_hwc() if buff is not None else None
+            return self.recompile_and_run()
         return None # reuse cached
 
 if __name__ == '__main__':

@@ -26,7 +26,9 @@ wb(c) = cast<float>(select(c == 0, wb_r, select(c == 1, wb_g, wb_b)) / wb_min);
 
 Func masked;
 masked(x, y, c) = select(ip_colors(x, y, 0) == c, in_range(x, y, 0) * wb(c), 0);
-//masked(x, y, c) = select(colors(x, y, 0) == c, in_range(x, y, 0), 0) * wb_min;
+
+// Debug single color channel
+//masked(x, y, c) = select(c == 1, masked(x, y, c), 0);
 
 result(x, y, c) = cast<uint16_t>(clamp(col_range * masked(x, y, c), 0, 3048));
 //result(x, y, c) = cast<uint16_t>(clamp(col_range * masked(x, y, c), 0, 65535)); // output: RGB
