@@ -15,9 +15,11 @@ from imgui_bundle import hello_imgui, glfw_utils, imgui, immapp # type: ignore
 
 from pyviewer.toolbar_viewer import PannableArea
 from pyviewer.utils import normalize_image_data
+from pyviewer.imgui_themes import theme_deep_dark
 
 
 # Based on:
+# https://traineq.org/ImGuiBundle/emscripten/bin/demo_docking.html
 # https://github.com/pthom/imgui_bundle/blob/main/bindings/pyodide_web_demo/examples/demo_docking.py
 
 def layout(pos: str):
@@ -86,8 +88,16 @@ class DockingViewer:
     def setup_state(self):
         pass
 
+    # Can be overridden
     def setup_theme(self):
-        pass
+        theme_deep_dark()
+        s: imgui.Style = imgui.get_style()
+        s.window_padding = (3, 3)
+        s.tab_rounding = 0
+        s.set_color_(imgui.Col_.tab_dimmed_selected, (39/255, 44/255, 54/255, 1))
+        s.set_color_(imgui.Col_.tab_selected, (39/255, 44/255, 54/255, 1))
+        s.set_color_(imgui.Col_.tab, (39/255, 44/255, 54/255, 1))
+        s.set_color_(imgui.Col_.title_bg, (15/255, 15/255, 15/255, 1))
 
     # Manual GLFW callbacks
     # Overrides the ones below
@@ -120,6 +130,13 @@ class DockingViewer:
         if isinstance(key, str):
             key = getattr(glfw, key.upper())
         return self.v.keyhit(key)
+    
+    def _draw_menu_wrapper(self, runner_params: hello_imgui.RunnerParams):
+        if self.show_app_menu:
+            hello_imgui.show_app_menu(runner_params) # quit button
+        if self.show_view_menu:
+            hello_imgui.show_view_menu(runner_params) # status bar show/hide, docking layout reset, etc.
+        self.draw_menu()
     
     def __init__(self, name: str):
         # Start compute thread asap
@@ -164,18 +181,24 @@ class DockingViewer:
             # Set own glfw callbacks, will be chained by imgui
             self.window = glfw_utils.glfw_window_hello_imgui() # why not glfw.get_current_context()?
             self.pan_handler.set_callbacks(self.window)
-
+        
         runner_params.callbacks.post_init = post_init_fun
         runner_params.callbacks.before_exit = before_exit
         runner_params.callbacks.post_init_add_platform_backend_callbacks = add_backend_cbk
         runner_params.callbacks.load_additional_fonts = self.load_fonts
         runner_params.callbacks.setup_imgui_style = self.setup_theme
+
+        self.show_app_menu = False
+        self.show_view_menu = True
+        runner_params.imgui_window_params.show_menu_bar = True
+        runner_params.imgui_window_params.show_menu_app = False # called manually
+        runner_params.imgui_window_params.show_menu_view = False # called manually
+        runner_params.callbacks.show_menus = lambda: self._draw_menu_wrapper(runner_params)
         
         # Status bar: fps etc.
-        if type(self).draw_status_bar == DockingViewer.draw_status_bar:
-            runner_params.imgui_window_params.show_status_bar = False
-        else:
-            runner_params.imgui_window_params.show_status_bar = True
+        runner_params.imgui_window_params.remember_status_bar_settings = False # don't cache
+        if type(self).draw_status_bar != DockingViewer.draw_status_bar: # overridden
+            runner_params.imgui_window_params.show_status_bar = True # off by default
             runner_params.callbacks.show_status = self.draw_status_bar
 
         # Create "MainDockSpace"
@@ -188,12 +211,12 @@ class DockingViewer:
         
         # Docking layout
         runner_params.docking_params = self.setup_layout()
-        #runner_params.docking_params.main_dock_space_node_flags |= imgui.DockNodeFlags_.auto_hide_tab_bar
+        runner_params.docking_params.main_dock_space_node_flags |= imgui.DockNodeFlags_.auto_hide_tab_bar
 
         # .ini for window and app state saving
         runner_params.ini_folder_type = hello_imgui.IniFolderType.app_user_config_folder
         runner_params.ini_filename = name.lower().strip().replace(' ', '_') + '.ini'
-        ini_path = os.path.join(hello_imgui.ini_folder_location(runner_params.ini_folder_type), runner_params.ini_filename)
+        ini_path = Path(hello_imgui.ini_folder_location(runner_params.ini_folder_type)) / runner_params.ini_filename
         print(f'INI path: {ini_path}')
 
         glfw.init()  # needed by glfw_utils.glfw_window_hello_imgui

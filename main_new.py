@@ -85,15 +85,6 @@ class HalideViewer(DockingViewer):
         self.tex_handle = _texture(gl.GL_NEAREST, gl.GL_NEAREST)
         self.prev_kernel_contents = defaultdict(str)
         self.should_recompile = True # set by UI thread, reacted to by compute thread
-
-    def setup_theme(self):
-        hello_imgui.imgui_default_settings.setup_default_imgui_style()
-        tweaked_theme = hello_imgui.ImGuiTweakedTheme()
-        tweaked_theme.theme = hello_imgui.ImGuiTheme_.material_flat
-        tweaked_theme.tweaks.rounding = 10.0
-        hello_imgui.apply_tweaked_theme(tweaked_theme)
-        imgui.get_style().item_spacing = (6, 4)
-        imgui.get_style().set_color_(imgui.Col_.text, ImVec4(0.8, 0.8, 0.85, 1.0))
     
     @dockable
     def draw_text_editor(self):
@@ -117,8 +108,8 @@ class HalideViewer(DockingViewer):
         self.editor.render(f"{self.state.kernel}.cpp")
         imgui.pop_font()
     
-    def draw_status_bar(self):
-        imgui.text('Hello!')
+    #def draw_status_bar(self):
+    #    imgui.text('Hello from status bar!')
     
     def recompile(self) -> str:
         """Recompile the current kernel, return potential error message"""
@@ -275,6 +266,7 @@ class HalideViewer(DockingViewer):
             return
         pth.write_text(new_src)
 
+    @dockable
     def draw_toolbar(self):
         draw_container(self.state)
         for k, v in self.params.items():
