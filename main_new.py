@@ -1,5 +1,4 @@
 from collections import defaultdict
-from contextlib import contextmanager, nullcontext
 from functools import lru_cache
 import os
 import platform
@@ -13,17 +12,12 @@ from PIL import Image
 from pyviewer.params import *
 from halide_ffi_ctypes import LibBinder, Buffer
 import rawpy
-from pyviewer.gl_viewer import _texture
-import OpenGL.GL as gl
-
-import time
-from imgui_bundle import hello_imgui, imgui, ImVec4 # type: ignore
 
 from pyviewer.imgui_themes import color_uint as hex_color
-from imgui_bundle import imgui, imgui_md # type: ignore
-from imgui_bundle import imgui_color_text_edit as ed # type: ignore
+from pyviewer.docking_viewer import DockingViewer, dockable
 
-from docking_viewer import DockingViewer, dockable
+from imgui_bundle import imgui
+from imgui_bundle import imgui_md, imgui_color_text_edit as ed # type: ignore
 
 # Halide C++ library bundled with python package
 hl_root = Path(hl.install_dir())
@@ -82,7 +76,6 @@ class HalideViewer(DockingViewer):
         palette[ed.TextEditor.PaletteIndex.number] = imgui.IM_COL32(*hex_color("#CAC074")[::-1]) # endianness mismatch?
         self.editor.set_palette(palette)
 
-        self.tex_handle = _texture(gl.GL_NEAREST, gl.GL_NEAREST)
         self.prev_kernel_contents = defaultdict(str)
         self.should_recompile = True # set by UI thread, reacted to by compute thread
     
@@ -266,6 +259,9 @@ class HalideViewer(DockingViewer):
             return
         pth.write_text(new_src)
 
+    #def draw_menu(self):
+    #    imgui.button('Custom menu item')
+    
     @dockable
     def draw_toolbar(self):
         draw_container(self.state)
